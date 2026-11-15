@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { test } from 'vitest';
-import { createJsonArraySplitter } from '../src/index.js';
+import { createJsonArraySplitter, JsonArraySplitError } from '../src/index.js';
 import { objectsOnly, randomArrays, splitAll, streamJsonAll, tricky, trickyJson } from './helpers.js';
 
 test('Matches JSON.parse whatever the chunk boundaries', () => {
@@ -111,6 +111,28 @@ test('Stops early on a primitive element', () => {
 	assert.strictEqual(splitter.push('[1, "a", null, {"b":2}]'), false);
 	splitter.end();
 	assert.deepStrictEqual(got, [1, 'a', null]);
+});
+
+test('Primitive elements match JSON.parse exactly, in any chunk size', () => {
+	const valid = ['-0', '0', '1e400', '-1e400', '1E-7', '1e+2', '-2.5E-3', '123456789012345678901234567890', '0.1', 'true', 'false', 'null',
+		'""', '"plain"', '"£€😀"', '"esc\\"aped\\n"', '"\\u00e9\\ud83d\\ude00"', '"\\ud800"'];
+	for (const element of valid) {
+		const text = `[${element}, ${element}]`;
+		const expected: unknown[] = JSON.parse(text);
+		for (const size of [1, 2, text.length]) {
+			const got = splitAll(Buffer.from(text), size);
+			assert.strictEqual(got.length, 2, element);
+			// Object.is tells -0 from 0
+			got.forEach((value, i) => assert.ok(Object.is(value, expected[i]), `${element}, chunk size ${size}`));
+		}
+	}
+	for (const element of ['01', '1.', '-', '.5', '+1', '1e', '0x10', 'NaN', 'Infinity', 'nul', 'truee', 'True', '"raw\ttab"', '"raw\nline"', '"bad \\x escape"']) {
+		const text = `[${element}]`;
+		assert.throws(() => JSON.parse(text), SyntaxError, element);
+		for (const size of [1, 2, text.length]) {
+			assert.throws(() => splitAll(Buffer.from(text), size), JsonArraySplitError, `${element}, chunk size ${size}`);
+		}
+	}
 });
 
 test('Allows a UTF-8 byte order mark at the start', () => {

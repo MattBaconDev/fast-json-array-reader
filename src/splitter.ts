@@ -29,6 +29,27 @@ const isWhitespace = (b: number) => b === 0x20 || b === 0x0a || b === 0x0d || b 
 const isBareStart = (b: number) => (b >= 0x30 && b <= 0x39) || b === 0x2d || b === 0x74 || b === 0x66 || b === 0x6e;
 // Any byte of a number, true, false or null (JSON.parse checks the exact form)
 const isBareByte = (b: number) => (b >= 0x30 && b <= 0x39) || (b >= 0x61 && b <= 0x7a) || b === 0x2d || b === 0x2b || b === 0x2e || b === 0x45;
+
+// Fast paths for primitive elements, which would otherwise cost a JSON.parse call each.
+// Anything they don't recognise goes to JSON.parse, which gives the error.
+function parseBare(bytes: Buffer, start: number, end: number): unknown {
+	const length = end - start;
+	const first = bytes[start];
+	if (length === 4 && first === 0x6e && bytes[start + 1] === 0x75 && bytes[start + 2] === 0x6c && bytes[start + 3] === 0x6c) return null;
+	if (length === 4 && first === 0x74 && bytes[start + 1] === 0x72 && bytes[start + 2] === 0x75 && bytes[start + 3] === 0x65) return true;
+	if (length === 5 && first === 0x66 && bytes[start + 1] === 0x61 && bytes[start + 2] === 0x6c && bytes[start + 3] === 0x73 && bytes[start + 4] === 0x65) return false;
+	// Bare elements are all ASCII
+	return JSON.parse(bytes.toString('latin1', start, end));
+}
+
+function parseString(bytes: Buffer, start: number, end: number): unknown {
+	for (let i = start + 1; i < end - 1; i++) {
+		// Escapes need decoding, and raw control characters must be rejected as JSON.parse does
+		if (bytes[i]! < 0x20 || bytes[i] === BACKSLASH) return JSON.parse(bytes.toString('utf8', start, end));
+	}
+	return bytes.toString('utf8', start + 1, end - 1);
+}
+
 const describe = (b: number) => (b >= 0x21 && b <= 0x7e ? `'${String.fromCharCode(b)}'` : `byte 0x${b.toString(16).padStart(2, '0')}`);
 
 /** @param index the element's position in the array, counting skipped primitives */
@@ -72,22 +93,27 @@ export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives
 
 	/** Parses the element ending at `end` (exclusive) in `chunk`. @returns false to stop */
 	function endElement(chunk: Buffer, start: number, end: number): boolean {
-		const piece = chunk.subarray(start, end);
-		// Joined once here, not per chunk, so a huge element costs linear time
-		const bytes = parts.length ? Buffer.concat([...parts, piece]) : piece;
+		if (parts.length) {
+			// Joined once here, not per chunk, so a huge element costs linear time
+			chunk = Buffer.concat([...parts, chunk.subarray(start, end)]);
+			start = 0;
+			end = chunk.length;
+			parts = [];
+		}
 		const elementIndex = index++;
-		const isContainer = kind === CONTAINER;
-		parts = [];
+		const elementKind = kind;
 		kind = NONE;
 		state = COMMA_OR_END;
 		let value;
 		try {
-			value = JSON.parse(bytes.toString('utf8'));
+			value = elementKind === BARE ? parseBare(chunk, start, end)
+				: elementKind === STRING ? parseString(chunk, start, end)
+				: JSON.parse(chunk.toString('utf8', start, end));
 		}
 		catch (err) {
 			throw new JsonArraySplitError(`Invalid JSON in element ${elementIndex} (byte ${elementOffset}) of JSON array: ${(err as Error).message}`, elementOffset, elementIndex, { cause: err });
 		}
-		if (!isContainer && !primitives) return true;
+		if (elementKind !== CONTAINER && !primitives) return true;
 		return onItem(value, elementIndex) !== false;
 	}
 
