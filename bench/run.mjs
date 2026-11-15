@@ -5,60 +5,11 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Writable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { parsers } from './parsers.mjs';
 
 const dataDir = path.join(import.meta.dirname, 'data');
 const RUNS = 3;
 const read = file => fs.createReadStream(file, { highWaterMark: 64 * 1024 });
-const sink = onRow => new Writable({ objectMode: true, write(value, _encoding, callback) { onRow(value); callback(); } });
-
-const parsers = {
-	async 'JSON.parse (whole file)'(file, onRow) {
-		for (const value of JSON.parse(fs.readFileSync(file, 'utf8'))) onRow(value);
-	},
-	async 'splitter (core)'(file, onRow) {
-		const { createJsonArraySplitter } = await import('../dist/index.js');
-		const splitter = createJsonArraySplitter(onRow);
-		for await (const chunk of read(file)) splitter.push(chunk);
-		splitter.end();
-	},
-	async 'splitter (iterator)'(file, onRow) {
-		const { splitJsonArray } = await import('../dist/index.js');
-		for await (const value of splitJsonArray(read(file))) onRow(value);
-	},
-	async 'splitter (stream)'(file, onRow) {
-		const { JsonArraySplitStream } = await import('../dist/index.js');
-		await pipeline(read(file), new JsonArraySplitStream(), sink(({ value }) => onRow(value)));
-	},
-	async 'stream-json'(file, onRow) {
-		const { default: streamArray } = await import('stream-json/streamers/stream-array.js');
-		await pipeline(read(file), streamArray.withParserAsStream(), sink(({ value }) => onRow(value)));
-	},
-	async JSONStream(file, onRow) {
-		const { default: JSONStream } = await import('JSONStream');
-		await pipeline(read(file), JSONStream.parse('*'), sink(onRow));
-	},
-	async '@streamparser/json'(file, onRow) {
-		const { JSONParser } = await import('@streamparser/json');
-		const parser = new JSONParser({ paths: ['$.*'], keepStack: false });
-		parser.onValue = ({ value }) => onRow(value);
-		for await (const chunk of read(file)) parser.write(chunk);
-		if (!parser.isEnded) parser.end();
-	},
-	async '@datastream/json'(file, onRow) {
-		const { jsonParseStream } = await import('@datastream/json');
-		const nullValue = Symbol.for('@datastream/null');
-		const stream = jsonParseStream();
-		await pipeline(read(file), stream, sink(value => onRow(value === nullValue ? null : value)));
-		const errors = Object.values(stream.result().value);
-		if (errors.length) throw new Error('reported errors: ' + JSON.stringify(errors));
-	},
-	async jsonarrayfs(file, onRow) {
-		const { JsonArrayStream } = await import('jsonarrayfs');
-		await pipeline(read(file), new JsonArrayStream('utf-8'), sink(value => onRow(value === JsonArrayStream.NULL ? null : value)));
-	},
-};
 
 async function child(parserName, file, hash) {
 	let peakHeap = 0;
@@ -70,7 +21,7 @@ async function child(parserName, file, hash) {
 	const started = process.hrtime.bigint();
 	let error;
 	try {
-		await parsers[parserName](file, onRow);
+		await parsers[parserName](read(file), onRow);
 	}
 	catch (err) {
 		error = err.message.slice(0, 200);

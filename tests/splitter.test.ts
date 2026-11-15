@@ -13,6 +13,15 @@ test('Matches JSON.parse whatever the chunk boundaries', () => {
 	assert.deepStrictEqual(splitAll(Buffer.from(' \r\n\t[ \n ] \n'), 1), []);
 });
 
+test('Finds the end of strings with runs of backslashes, split at any point', () => {
+	const values = ['\\', '\\\\', '\\"', '"\\', '\\\\"\\', 'a\\"b\\\\"c', '\\\\\\"', '"'];
+	const elements = [...values, Object.fromEntries(values.map((v, i) => [v, values[values.length - 1 - i]]))];
+	const buffer = Buffer.from(JSON.stringify(elements));
+	for (let size = 1; size <= 12; size++) {
+		assert.deepStrictEqual(splitAll(buffer, size), elements, 'chunk size ' + size);
+	}
+});
+
 test('Accepts string chunks', () => {
 	const got: unknown[] = [];
 	const splitter = createJsonArraySplitter(item => { got.push(item); });

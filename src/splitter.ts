@@ -130,19 +130,31 @@ export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives
 			let start = kind === NONE ? -1 : 0; // start of the current element within this chunk
 			try {
 				for (let i = 0; i < chunk.length; i++) {
-					const b = chunk[i]!;
 					if (inString) {
-						if (escaped) escaped = false;
-						else if (b === BACKSLASH) escaped = true;
-						else if (b === QUOTE) {
-							inString = false;
-							if (kind === STRING) {
-								if (!endElement(chunk, start, i + 1)) return (stopped = true, false);
-								start = -1;
-							}
+						if (escaped) {
+							escaped = false;
+							continue;
+						}
+						// Jump to the next quote natively rather than looking at each byte of the string.
+						// It's escaped if an odd number of backslashes come just before it.
+						const quote = chunk.indexOf(QUOTE, i);
+						const stop = quote === -1 ? chunk.length : quote;
+						let backslashes = 0;
+						while (stop - backslashes > i && chunk[stop - backslashes - 1] === BACKSLASH) backslashes++;
+						if (quote === -1) {
+							escaped = backslashes % 2 === 1;
+							break;
+						}
+						i = quote;
+						if (backslashes % 2 === 1) continue;
+						inString = false;
+						if (kind === STRING) {
+							if (!endElement(chunk, start, i + 1)) return (stopped = true, false);
+							start = -1;
 						}
 						continue;
 					}
+					const b = chunk[i]!;
 					if (depth > 1) {
 						// Inside a container element: JSON.parse checks its contents, we only find its end
 						if (b === QUOTE) inString = true;
