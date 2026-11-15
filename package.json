@@ -1,0 +1,54 @@
+{
+  "name": "fast-json-array-reader",
+  "version": "0.1.0",
+  "description": "Stream a large JSON array and get its elements one at a time, about 3x faster than character-by-character streaming parsers, and just as strict",
+  "keywords": [
+    "json",
+    "array",
+    "stream",
+    "streaming",
+    "parse",
+    "parser",
+    "large",
+    "big",
+    "JSONStream",
+    "stream-json"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MattBaconDev/fast-json-array-reader.git"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench:generate": "node bench/generate.mjs",
+    "bench": "npm run build && node bench/run.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "stream-json": "^3.9.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
