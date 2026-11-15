@@ -41,7 +41,7 @@ export interface SplitterOptions {
 
 export interface JsonArraySplitter {
 	/** @returns false once onItem has asked to stop */
-	push(chunk: Buffer | string): boolean;
+	push(chunk: Uint8Array | string): boolean;
 	/** Throws a JsonArraySplitError unless the array was complete (or onItem asked to stop) */
 	end(): void;
 	readonly stopped: boolean;
@@ -95,10 +95,12 @@ export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives
 		get stopped() {
 			return stopped;
 		},
-		push(chunk) {
+		push(input) {
 			if (failure) throw failure;
 			if (stopped) return false;
-			if (typeof chunk === 'string') chunk = Buffer.from(chunk);
+			const chunk = typeof input === 'string' ? Buffer.from(input)
+				: Buffer.isBuffer(input) ? input
+				: Buffer.from(input.buffer, input.byteOffset, input.byteLength);
 			let start = kind === NONE ? -1 : 0; // start of the current element within this chunk
 			try {
 				for (let i = 0; i < chunk.length; i++) {
