@@ -1,6 +1,6 @@
 # fast-json-array-reader
 
-Stream a large JSON array (`[{…},{…},…]`) and get its elements one at a time, without loading the whole file. On arrays of real-sized objects it is about **3× faster** than the popular streaming JSON parsers, uses no more memory, and is just as strict about broken input.
+Stream a large JSON array (`[{…},{…},…]`) and get its elements one at a time, without loading the whole file. On arrays of objects it is **2–4× faster** than the popular streaming JSON parsers (stream-json, JSONStream, @streamparser/json), about as fast as `JSON.parse` of the whole file, uses a few MB of heap, and is just as strict about broken input.
 
 ```js
 import { splitJsonArray } from 'fast-json-array-reader';
@@ -17,7 +17,7 @@ Zero dependencies. Node.js ≥ 20.19. ESM, and `require()` works too.
 It was written for a document store that keeps each partition's rows as one big JSON array file, up to about 500MB. Loading those files had two bad options:
 
 - **`JSON.parse` the whole file.** Fast, but the whole text and the whole object graph are in memory at once, and a file over about 512MB can't even be turned into one string (V8's maximum string length).
-- **A streaming JSON parser** (stream-json, JSONStream, @streamparser/json). Memory stays flat, but they tokenize every character in JavaScript, so they're about 3× slower than `JSON.parse`.
+- **A streaming JSON parser** (stream-json, JSONStream, @streamparser/json). Memory stays flat, but they tokenize every character in JavaScript, so they're 2–4× slower than `JSON.parse`.
 
 Most of a streaming parser's work is wasted when all you want is the elements of one top-level array. To find where an element ends you only need to track strings, escapes and bracket depth. The element's bytes can then go to V8's native `JSON.parse`, which is far faster than any JavaScript tokenizer and checks everything inside the element. This library does exactly that, and checks the array structure between elements itself, so broken input still throws.
 
@@ -25,13 +25,13 @@ Most of a streaming parser's work is wasted when all you want is the elements of
 
 | | Good at | Not so good at |
 |---|---|---|
-| **fast-json-array-reader** | Large top-level arrays of objects: fastest streaming option measured, low memory, strict, exact `JSON.parse` values | Only top-level arrays. No paths into nested data, no partial values while a huge element is still arriving |
+| **fast-json-array-reader** | Large top-level arrays: fastest streaming option measured, low memory, strict, exact `JSON.parse` values, no dependencies | Only top-level arrays. No paths into nested data, no partial values while a huge element is still arriving |
 | [`JSON.parse`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/JSON/parse) | Fastest when the file fits comfortably in memory | Holds the whole text and result at once; fails outright near 512MB |
-| [stream-json](https://www.npmjs.com/package/stream-json) | Any JSON shape: filters, picks, paths, SAX-style tokens, huge single values. Maintained and strict | ~3× slower on arrays of objects, more memory; ESM-only since 3.x |
-| [@streamparser/json](https://www.npmjs.com/package/@streamparser/json) | Paths into any shape; works in browsers and Deno as well as Node | ~3× slower on arrays of objects; slow and memory-hungry on single huge values; accepts some broken input |
-| [JSONStream](https://www.npmjs.com/package/JSONStream) | Familiar `parse('*')` API, path patterns | Last released in 2018; accepts most broken input; drops `null` elements and `__proto__` keys, gives big integers as strings |
-| [@datastream/json](https://www.npmjs.com/package/@datastream/json) | Same approach as this library, nearly as fast; part of a web-streams pipeline framework | Errors are collected in a report, not thrown, and commas aren't checked; values over 16MB are rejected by default; a Transform only, and pulls in `@datastream/core` |
-| [jsonarrayfs](https://www.npmjs.com/package/jsonarrayfs) | Same idea, plus appending to a JSON array file | Garbles multi-byte characters split across chunks; accepts missing commas, truncated input and data after `]`; several times slower |
+| [stream-json](https://www.npmjs.com/package/stream-json) | Any JSON shape: filters, picks, paths, SAX-style tokens. Maintained and strict | 2–3× slower on arrays of objects, more memory |
+| [@streamparser/json](https://www.npmjs.com/package/@streamparser/json) | Paths into any shape; works in browsers and Deno as well as Node | 3–4× slower on arrays of objects; slow and memory-hungry on single huge values; accepts some broken input |
+| [JSONStream](https://www.npmjs.com/package/JSONStream) | Familiar `parse('*')` API, path patterns | Last released in 2018; 2–3× slower; accepts most broken input; drops `null` elements and `__proto__` keys, gives big integers as strings |
+| [@datastream/json](https://www.npmjs.com/package/@datastream/json) | Same approach as this library, 20–40% slower; part of a stream pipeline framework | Errors are collected in a report, not thrown, and commas aren't checked; values over 16MB are rejected by default; a Transform only, and pulls in `@datastream/core` |
+| [jsonarrayfs](https://www.npmjs.com/package/jsonarrayfs) | Same idea, plus appending to a JSON array file | Garbles multi-byte characters split across chunks; accepts missing commas and truncated input; 5–6× slower |
 | [@discoveryjs/json-ext](https://www.npmjs.com/package/@discoveryjs/json-ext) `parseChunked` | Parses a whole value from chunks without one giant string | Builds the whole result in memory; doesn't give array elements one by one |
 
 **Use this library when** you read big JSON arrays (logs, exports, database dumps, API responses) whose elements are objects or arrays, and you want the speed of `JSON.parse` without its memory use.
@@ -183,7 +183,51 @@ All three of this library's APIs gave the same results. @datastream/json still e
 
 ## Benchmarks
 
-<!-- BENCHMARKS -->
+Measured with [`bench/run.mjs`](bench/run.mjs) on files from [`bench/generate.mjs`](bench/generate.mjs) (seeded, so you can reproduce them). The row files mimic the document store this was written for: `{"ndbid":…,"tableId":…,"id":"<uuid>","values":[[],[],[],<timestamp>,{…10–40 string attributes, some long, with non-ASCII and escapes…}]}`.
+
+Node v22.23.4, Intel Xeon @ 2.10GHz (4 cores), Linux x64. Read with `fs.createReadStream` in 64KB chunks; each parser runs in its own process; best of 3. Full results, including the iterator and stream APIs and peak RSS, are in [`bench/results.md`](bench/results.md).
+
+**Arrays of objects**
+
+| Parser | 95MB, 112k rows (0.9KB each) | 429MB, 125k rows (3.6KB each) | Peak heap |
+|---|---|---|---|
+| **this library** | **1.07s** | **3.85s** | 7MB |
+| `JSON.parse` (whole file) | 1.37s | 4.61s | 343MB / 1506MB |
+| @datastream/json | 1.47s | 4.71s | 12–20MB |
+| stream-json | 3.22s | 8.05s | 21MB |
+| JSONStream | 3.01s ⚠️ | 8.53s ⚠️ | 11–13MB |
+| @streamparser/json | 4.18s | 14.03s | 9–19MB |
+| jsonarrayfs | 5.31s ⚠️ | 22.45s ⚠️ | 18–19MB |
+
+⚠️ Gave different rows from `JSON.parse`.
+
+**One 32MB element** (`[{"blob":"…"}]`): this library 348ms, `JSON.parse` 362ms, JSONStream 701ms, stream-json 1.15s, @streamparser/json 2.22s (941MB peak RSS), jsonarrayfs 5.43s (wrong value), @datastream/json rejected it (over its 16MB default limit). Like `JSON.parse`, this library holds the whole element before parsing it, so peak memory is several times its size.
+
+**1 million tiny primitives**
+
+| Parser | `true`/`false`/`null` (6MB) | Numbers (11MB) | Short strings (11MB) |
+|---|---|---|---|
+| **this library, core** | **91ms** | **256ms** | **260ms** |
+| this library, stream | 144ms | 350ms | 350ms |
+| this library, iterator | 422ms | 591ms | 592ms |
+| `JSON.parse` (whole file) | 83ms | 196ms | 278ms |
+| @datastream/json | 196ms | 303ms | 313ms |
+| @streamparser/json | 181ms | 614ms | 623ms |
+| stream-json | 376ms | 827ms | 674ms |
+| JSONStream | 695ms ⚠️ | 1.37s | 1.01s ⚠️ |
+| jsonarrayfs | 793ms | 1.23s | 801ms ⚠️ |
+
+The async iterator costs a promise per element, which shows on millions of tiny values but not on real-sized rows. Use the core API or the stream for those.
+
+To reproduce:
+
+```bash
+node bench/generate.mjs
+```
+
+```bash
+npm run bench
+```
 
 ## How it works
 
