@@ -79,15 +79,38 @@ test('Rejects malformed arrays, like stream-json', async () => {
 	}
 });
 
-test('Checks primitive elements but only emits objects and arrays', async () => {
+test('Emits primitive elements, or checks and skips them with primitives: false', async () => {
 	const text = '[1, "x,]}\\"", {"a":1}, null, true, false, -2.5e+3, [2], 0]';
+	const all = [1, 'x,]}"', { a: 1 }, null, true, false, -2500, [2], 0];
 	for (const size of [1, 2, 5, text.length]) {
-		assert.deepStrictEqual(splitAll(Buffer.from(text), size), [{ a: 1 }, [2]], 'chunk size ' + size);
+		assert.deepStrictEqual(splitAll(Buffer.from(text), size), all, 'chunk size ' + size);
+		assert.deepStrictEqual(splitAll(Buffer.from(text), size, { primitives: false }), [{ a: 1 }, [2]], 'chunk size ' + size);
 	}
-	assert.deepStrictEqual(objectsOnly(await streamJsonAll(Buffer.from(text))), [{ a: 1 }, [2]]);
+	assert.deepStrictEqual(await streamJsonAll(Buffer.from(text)), all);
 	for (const bad of ['[-]', '[nul]', '[1.]', '[01]', '[1e]', '["\\u12"]']) {
 		assert.throws(() => splitAll(Buffer.from(bad)), /Invalid JSON in element 0/, bad);
+		assert.throws(() => splitAll(Buffer.from(bad), undefined, { primitives: false }), /Invalid JSON in element 0/, bad);
 	}
+});
+
+test('Passes each element its index in the array, counting skipped primitives', () => {
+	const seen = (primitives: boolean) => {
+		const got: [unknown, number][] = [];
+		const splitter = createJsonArraySplitter((value, index) => { got.push([value, index]); }, { primitives });
+		splitter.push('[1, {"a":1}, null, [2]]');
+		splitter.end();
+		return got;
+	};
+	assert.deepStrictEqual(seen(true), [[1, 0], [{ a: 1 }, 1], [null, 2], [[2], 3]]);
+	assert.deepStrictEqual(seen(false), [[{ a: 1 }, 1], [[2], 3]]);
+});
+
+test('Stops early on a primitive element', () => {
+	const got: unknown[] = [];
+	const splitter = createJsonArraySplitter(value => { got.push(value); return value !== null; });
+	assert.strictEqual(splitter.push('[1, "a", null, {"b":2}]'), false);
+	splitter.end();
+	assert.deepStrictEqual(got, [1, 'a', null]);
 });
 
 test('Allows a UTF-8 byte order mark at the start', () => {
@@ -121,10 +144,11 @@ test('An element spanning many chunks costs linear time', () => {
 
 test('Matches JSON.parse and stream-json on random arrays', async () => {
 	for (const [n, { text, buffer, chunkSize }] of randomArrays(20261114, 400).entries()) {
-		const expected = objectsOnly(JSON.parse(text));
-		assert.deepStrictEqual(objectsOnly(await streamJsonAll(buffer, chunkSize)), expected, 'stream-json, case ' + n);
+		const expected = JSON.parse(text);
+		assert.deepStrictEqual(await streamJsonAll(buffer, chunkSize), expected, 'stream-json, case ' + n);
 		for (const size of [1, 3, chunkSize]) {
 			assert.deepStrictEqual(splitAll(buffer, size), expected, `case ${n}, chunk size ${size}`);
+			assert.deepStrictEqual(splitAll(buffer, size, { primitives: false }), objectsOnly(expected), `case ${n}, chunk size ${size}, objects only`);
 		}
 	}
 });

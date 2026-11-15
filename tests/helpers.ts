@@ -1,6 +1,6 @@
 import { Readable, pipeline } from 'node:stream';
 import streamArray from 'stream-json/streamers/stream-array.js';
-import { createJsonArraySplitter } from '../src/index.js';
+import { createJsonArraySplitter, type SplitterOptions } from '../src/index.js';
 
 export const tricky = [
 	{ a: 'x}]{["\\"' },
@@ -17,9 +17,9 @@ export function chunksOf(buffer: Buffer, chunkSize: number): Buffer[] {
 	return chunks;
 }
 
-export function splitAll(buffer: Buffer, chunkSize = buffer.length || 1): unknown[] {
+export function splitAll(buffer: Buffer, chunkSize = buffer.length || 1, options?: SplitterOptions): unknown[] {
 	const got: unknown[] = [];
-	const splitter = createJsonArraySplitter(item => { got.push(item); });
+	const splitter = createJsonArraySplitter(item => { got.push(item); }, options);
 	for (const chunk of chunksOf(buffer, chunkSize)) splitter.push(chunk);
 	splitter.end();
 	return got;

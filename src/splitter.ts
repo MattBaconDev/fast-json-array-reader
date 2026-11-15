@@ -10,7 +10,7 @@
 //   can't be mistaken for them, and an element split across chunks is joined as bytes before decoding.
 //
 // Differences from JSON.parse of the whole file:
-// - Only object and array elements are emitted. Primitive elements are checked, then skipped.
+// - With `primitives: false`, only object and array elements are emitted. Primitive elements are checked, then skipped.
 // - A leading UTF-8 byte order mark is allowed.
 
 const QUOTE = 0x22, BACKSLASH = 0x5c, COMMA = 0x2c;
@@ -29,7 +29,13 @@ const isBareStart = (b: number) => (b >= 0x30 && b <= 0x39) || b === 0x2d || b =
 const isBareByte = (b: number) => (b >= 0x30 && b <= 0x39) || (b >= 0x61 && b <= 0x7a) || b === 0x2d || b === 0x2b || b === 0x2e || b === 0x45;
 const describe = (b: number) => (b >= 0x21 && b <= 0x7e ? `'${String.fromCharCode(b)}'` : `byte 0x${b.toString(16).padStart(2, '0')}`);
 
-export type OnItem = (item: any) => boolean | void;
+/** @param index the element's position in the array, counting skipped primitives */
+export type OnItem<T = any> = (value: T, index: number) => boolean | void;
+
+export interface SplitterOptions {
+	/** Emit numbers, strings, booleans and null as well as objects and arrays. Default true */
+	primitives?: boolean;
+}
 
 export interface JsonArraySplitter {
 	/** @returns false once onItem has asked to stop */
@@ -40,9 +46,9 @@ export interface JsonArraySplitter {
 }
 
 /**
- * @param onItem called with each object/array element; return false to stop
+ * @param onItem called with each element; return false to stop
  */
-export function createJsonArraySplitter(onItem: OnItem): JsonArraySplitter {
+export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives = true }: SplitterOptions = {}): JsonArraySplitter {
 	let state = START;
 	let kind = NONE;
 	let depth = 0; // 1 = inside the top-level array, 2+ = inside a container element
@@ -79,8 +85,8 @@ export function createJsonArraySplitter(onItem: OnItem): JsonArraySplitter {
 		catch (err) {
 			throw new Error(`Invalid JSON in element ${elementIndex} (byte ${elementOffset}) of JSON array: ${(err as Error).message}`, { cause: err });
 		}
-		if (!isContainer) return true;
-		return onItem(value) !== false;
+		if (!isContainer && !primitives) return true;
+		return onItem(value, elementIndex) !== false;
 	}
 
 	return {
