@@ -13,6 +13,8 @@
 // - With `primitives: false`, only object and array elements are emitted. Primitive elements are checked, then skipped.
 // - A leading UTF-8 byte order mark is allowed.
 
+import { JsonArraySplitError } from './errors.js';
+
 const QUOTE = 0x22, BACKSLASH = 0x5c, COMMA = 0x2c;
 const OPEN_OBJ = 0x7b, CLOSE_OBJ = 0x7d, OPEN_ARR = 0x5b, CLOSE_ARR = 0x5d;
 const BOM = [0xef, 0xbb, 0xbf];
@@ -40,7 +42,7 @@ export interface SplitterOptions {
 export interface JsonArraySplitter {
 	/** @returns false once onItem has asked to stop */
 	push(chunk: Buffer | string): boolean;
-	/** Throws unless the array was complete (or onItem asked to stop) */
+	/** Throws a JsonArraySplitError unless the array was complete (or onItem asked to stop) */
 	end(): void;
 	readonly stopped: boolean;
 }
@@ -64,8 +66,8 @@ export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives
 	/** bytes of the current element from earlier chunks */
 	let parts: Buffer[] = [];
 
-	function fail(message: string, at: number): never {
-		throw new Error(`${message} at byte ${at} of JSON array`);
+	function fail(message: string, at: number, elementIndex?: number): never {
+		throw new JsonArraySplitError(`${message} at byte ${at} of JSON array`, at, elementIndex);
 	}
 
 	/** Parses the element ending at `end` (exclusive) in `chunk`. @returns false to stop */
@@ -83,7 +85,7 @@ export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives
 			value = JSON.parse(bytes.toString('utf8'));
 		}
 		catch (err) {
-			throw new Error(`Invalid JSON in element ${elementIndex} (byte ${elementOffset}) of JSON array: ${(err as Error).message}`, { cause: err });
+			throw new JsonArraySplitError(`Invalid JSON in element ${elementIndex} (byte ${elementOffset}) of JSON array: ${(err as Error).message}`, elementOffset, elementIndex, { cause: err });
 		}
 		if (!isContainer && !primitives) return true;
 		return onItem(value, elementIndex) !== false;
@@ -160,7 +162,7 @@ export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives
 								inString = true;
 							}
 							else if (isBareStart(b)) kind = BARE;
-							else fail(`Expected an array element but found ${describe(b)}`, offset + i);
+							else fail(`Expected an array element but found ${describe(b)}`, offset + i, index);
 							break;
 						case COMMA_OR_END:
 							if (b === COMMA) state = ELEMENT;
@@ -188,7 +190,7 @@ export function createJsonArraySplitter<T = any>(onItem: OnItem<T>, { primitives
 		end() {
 			if (failure) throw failure;
 			if (stopped || state === DONE) return;
-			failure = new Error(`Unexpected end of JSON array (${state === START ? "no '[' found" : `after ${index} element(s)`}) at byte ${offset}`);
+			failure = new JsonArraySplitError(`Unexpected end of JSON array (${state === START ? "no '[' found" : `after ${index} element(s)`}) at byte ${offset}`, offset, kind === NONE ? undefined : index);
 			throw failure;
 		}
 	};
