@@ -151,7 +151,35 @@ It accepts exactly what `JSON.parse` accepts for a top-level array, and gives th
 
 Measured with [`bench/strictness.mjs`](bench/strictness.mjs), feeding each input one byte per chunk:
 
-<!-- STRICTNESS -->
+✅ = throws an error, 📝 = reports an error in a summary but doesn't throw, ❌ = accepts it.
+
+| Broken input | `JSON.parse` | **this library** | stream-json | JSONStream | @streamparser/json | @datastream/json | jsonarrayfs |
+|---|---|---|---|---|---|---|---|
+| Empty input | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Whitespace only | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Cut off inside an element | ✅ | ✅ | ✅ | ❌ | ✅ | 📝 | ✅ |
+| Cut off between elements | ✅ | ✅ | ✅ | ❌ | ✅ | 📝 | ❌ |
+| Missing comma | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Leading comma | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Double comma | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Trailing comma | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ |
+| Data after `]` | ✅ | ✅ | ✅ | ✅ | ✅ | 📝 | ✅ |
+| Second array after the first | ✅ | ✅ | ✅ | ❌ | ✅ | 📝 | ❌ |
+| Top-level object | ✅ | ✅ | ✅ | ❌ | ❌ | 📝 | ✅ |
+| Top-level string | ✅ | ✅ | ✅ | ❌ | ❌ | 📝 | ✅ |
+| Invalid JSON in an element | ✅ | ✅ | ✅ | ❌ | ✅ | 📝 | ✅ |
+
+✅ = same values as `JSON.parse`, ❌ = different values.
+
+| Valid input | `JSON.parse` | **this library** | stream-json | JSONStream | @streamparser/json | @datastream/json | jsonarrayfs |
+|---|---|---|---|---|---|---|---|
+| `null` elements | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Big integers | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| `__proto__` keys | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Multi-byte characters split across chunks | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Primitive elements | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+All three of this library's APIs gave the same results. @datastream/json still emits the elements before a reported error. JSONStream and jsonarrayfs also gave different rows on the generated benchmark files below.
 
 ## Benchmarks
 
@@ -159,7 +187,7 @@ Measured with [`bench/strictness.mjs`](bench/strictness.mjs), feeding each input
 
 ## How it works
 
-- It scans raw bytes. Inside an element it only tracks three things: whether it's in a string, whether the last byte was a backslash, and bracket depth. That's enough to find where each top-level element ends. The element's bytes then go to `JSON.parse`, which checks everything inside it.
+- It scans raw bytes. Inside an element it only tracks strings, escapes and bracket depth. That's enough to find where each top-level element ends. Inside a string it jumps to the next quote with `Buffer.indexOf` (native code) and counts the backslashes before it. The element's bytes then go to `JSON.parse`, which checks everything inside it.
 - Between elements it checks the array structure itself: an optional BOM, whitespace, one `[`, a `,` between elements, `]`, then only whitespace. Empty input, input cut off anywhere, missing, doubled, leading or trailing commas, junk, a second array, and a top-level object or string all throw.
 - UTF-8 is safe without decoding first: multi-byte sequences only use bytes ≥ 0x80, so they can never be mistaken for the ASCII bytes it looks for. An element split across chunks is joined as bytes before it's decoded.
 - An element that spans chunks is kept as a list of copied pieces and joined once when it ends, so a huge element costs linear time, and the rest of each chunk can be freed.
