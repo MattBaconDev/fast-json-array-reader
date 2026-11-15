@@ -34,6 +34,7 @@ const files = {
 	'numbers-1m.json': { count: 1e6, element: () => pick([int(0, 1000), int(-1e6, 1e6), Math.round(random() * 1e6) / 1e3, random() * 1e-5]) },
 	'strings-1m.json': { count: 1e6, element: () => text(int(1, 12)) },
 	'literals-1m.json': { count: 1e6, element: () => pick([true, false, null]) },
+	'one-32mb-element.json': { count: 1, element: () => ({ blob: text(32 * 1024 * 1024) }) },
 };
 
 async function write(name, { bytes = Infinity, count = Infinity, element }, fileSeed) {
